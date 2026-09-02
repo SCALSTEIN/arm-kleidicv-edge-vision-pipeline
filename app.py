@@ -29,12 +29,32 @@ CLASSES = [
 ]
 
 MODEL_PATH = "yolov8n.onnx"
-MODEL_URL = "https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx"
+MODEL_URLS = [
+    "https://huggingface.co/visual-layer/yolov8n-onnx/resolve/main/yolov8n.onnx",
+    "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.onnx"
+]
 
 def ensure_model_exists():
     if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 1_000_000:
         with st.spinner("Downloading pre-trained YOLOv8n ONNX model (~12MB)..."):
-            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+            success = False
+            for url in MODEL_URLS:
+                try:
+                    req = urllib.request.Request(
+                        url,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                    )
+                    with urllib.request.urlopen(req, timeout=30) as resp, open(MODEL_PATH, "wb") as out_file:
+                        out_file.write(resp.read())
+                    if os.path.exists(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 1_000_000:
+                        success = True
+                        break
+                except Exception:
+                    continue
+            
+            if not success:
+                st.error("Failed to download model weights from available mirrors. Please verify connectivity.")
+                st.stop()
 
 ensure_model_exists()
 
