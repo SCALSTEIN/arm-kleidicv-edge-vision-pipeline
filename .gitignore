@@ -1,0 +1,13 @@
+# Python environment & cache
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Models & binaries
+*.onnx
+*.pt
+
+# Streamlit local state
+.streamlit/
