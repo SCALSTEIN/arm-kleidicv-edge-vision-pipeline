@@ -6,7 +6,6 @@ __pycache__/
 *$py.class
 
 # Models & binaries
-*.onnx
 *.pt
 
 # Streamlit local state
