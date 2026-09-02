@@ -35,26 +35,33 @@ MODEL_URLS = [
 ]
 
 def ensure_model_exists():
-    if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 1_000_000:
-        with st.spinner("Downloading pre-trained YOLOv8n ONNX model (~12MB)..."):
-            success = False
-            for url in MODEL_URLS:
-                try:
-                    req = urllib.request.Request(
-                        url,
-                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                    )
-                    with urllib.request.urlopen(req, timeout=30) as resp, open(MODEL_PATH, "wb") as out_file:
-                        out_file.write(resp.read())
-                    if os.path.exists(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 1_000_000:
-                        success = True
-                        break
-                except Exception:
-                    continue
-            
-            if not success:
-                st.error("Failed to download model weights from available mirrors. Please verify connectivity.")
-                st.stop()
+    if os.path.exists(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 1_000_000:
+        return
+
+    with st.spinner("Downloading YOLOv8n ONNX model (~12MB)..."):
+        success = False
+        for url in MODEL_URLS:
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp, open(MODEL_PATH, "wb") as out_file:
+                    while True:
+                        chunk = resp.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+
+                if os.path.exists(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 1_000_000:
+                    success = True
+                    break
+            except Exception:
+                continue
+
+        if not success:
+            st.error("Failed to load model weights. Ensure 'yolov8n.onnx' is committed directly to the repository.")
+            st.stop()
 
 ensure_model_exists()
 
@@ -80,23 +87,21 @@ input_name = session.get_inputs()[0].name
 def preprocess(frame, target_size=(640, 640)):
     """Vectorized preprocessing: Resize -> BGR2RGB -> Transpose -> Normalize."""
     t0 = time.perf_counter()
-    
-    # Bilinear resize and color conversion (accelerated via SIMD/KleidiCV primitives)
+
     resized = cv2.resize(frame, target_size, interpolation=cv2.INTER_LINEAR)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    
-    # HWC to CHW transposition and normalization
+
     tensor = rgb.transpose(2, 0, 1).astype(np.float32) / 255.0
     tensor = np.expand_dims(tensor, axis=0)
-    
-    t_pre = (time.perf_counter() - t0) * 1000.0  # ms
+
+    t_pre = (time.perf_counter() - t0) * 1000.0
     return tensor, t_pre
 
 def postprocess(output, orig_shape, conf_threshold=0.35):
     """Parse YOLOv8 output tensor and extract non-suppressed bounding boxes."""
     t0 = time.perf_counter()
-    predictions = np.squeeze(output[0]).T  # shape: (8400, 84)
-    
+    predictions = np.squeeze(output[0]).T
+
     scores = np.max(predictions[:, 4:], axis=1)
     keep = scores > conf_threshold
     predictions = predictions[keep]
@@ -106,10 +111,10 @@ def postprocess(output, orig_shape, conf_threshold=0.35):
     if len(scores) > 0:
         class_ids = np.argmax(predictions[:, 4:], axis=1)
         x, y, w, h = predictions[:, 0], predictions[:, 1], predictions[:, 2], predictions[:, 3]
-        
+
         scale_x = orig_shape[1] / 640.0
         scale_y = orig_shape[0] / 640.0
-        
+
         for i in range(len(scores)):
             x1 = int((x[i] - w[i] / 2) * scale_x)
             y1 = int((y[i] - h[i] / 2) * scale_y)
@@ -117,7 +122,7 @@ def postprocess(output, orig_shape, conf_threshold=0.35):
             y2 = int((y[i] + h[i] / 2) * scale_y)
             boxes.append((x1, y1, x2, y2, scores[i], class_ids[i]))
 
-    t_post = (time.perf_counter() - t0) * 1000.0  # ms
+    t_post = (time.perf_counter() - t0) * 1000.0
     return boxes, t_post
 
 # ----------------- Sidebar Telemetry -----------------
@@ -151,15 +156,15 @@ m1, m2, m3, m4 = st.columns(4)
 def process_and_render(frame):
     h, w, _ = frame.shape
     tensor, t_pre = preprocess(frame)
-    
+
     # Inference
     t_inf_start = time.perf_counter()
     outputs = session.run(None, {input_name: tensor})
     t_inf = (time.perf_counter() - t_inf_start) * 1000.0
-    
+
     # Postprocessing
     boxes, t_post = postprocess(outputs, (h, w))
-    
+
     # Render Detections
     annotated = frame.copy()
     for (x1, y1, x2, y2, conf, cls_id) in boxes:
@@ -170,17 +175,14 @@ def process_and_render(frame):
 
     total_time = t_pre + t_inf + t_post
     fps = 1000.0 / total_time if total_time > 0 else 0.0
-    
-    # Display updated frame
+
     frame_display.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
-    
-    # Metrics
+
     m1.metric("Pipeline FPS", f"{fps:.1f} FPS")
     m2.metric("Preprocessing", f"{t_pre:.2f} ms")
     m3.metric("Inference", f"{t_inf:.2f} ms")
     m4.metric("Postprocessing", f"{t_post:.2f} ms")
-    
-    # Append to rolling latency chart
+
     new_entry = pd.DataFrame([{
         "Frame": len(st.session_state.latency_history) + 1,
         "Preprocessing (ms)": round(t_pre, 2),
@@ -190,11 +192,11 @@ def process_and_render(frame):
         [st.session_state.latency_history, new_entry],
         ignore_index=True
     ).tail(30)
-    
+
     latency_chart.line_chart(
         st.session_state.latency_history.set_index("Frame")[["Preprocessing (ms)", "Inference (ms)"]]
     )
-    
+
     ram = psutil.virtual_memory()
     cpu_pct = psutil.cpu_percent(interval=None)
     cpu_metric.metric("CPU Load", f"{cpu_pct}%")
@@ -208,14 +210,14 @@ if source_type == "Sample Test Image":
     cv2.rectangle(img, (220, 220), (460, 560), (255, 120, 0), -1)
     cv2.putText(img, "Synthetic Test Frame (Ready for Camera Feed)", (140, 100),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-    
+
     if st.button("▶ Run Single Frame Benchmark"):
         process_and_render(img)
 
 elif source_type == "Webcam Live Feed":
     run_cam = st.toggle("Start Camera Stream", value=False)
     cap = cv2.VideoCapture(0)
-    
+
     while run_cam and cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -223,5 +225,5 @@ elif source_type == "Webcam Live Feed":
             break
         process_and_render(frame)
         time.sleep(0.01)
-        
+
     cap.release()
