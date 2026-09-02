@@ -23,3 +23,20 @@ pip install -r requirements.txt
 
 # 4. Launch console
 streamlit run app.py
+
+---
+
+### Step-by-Step GitHub Setup Instructions
+
+Run these commands in PowerShell or terminal to create and push the repository:
+
+```bash
+# Initialize local Git repository
+git init
+git add .
+git commit -m "feat: initial commit for edge vision pipeline with hardware telemetry"
+
+# Rename default branch and link remote
+git branch -M main
+git remote add origin https://github.com/SCALSTEIN/arm-kleidicv-edge-vision-pipeline.git
+git push -u origin main
